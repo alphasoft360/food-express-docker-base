@@ -4,6 +4,10 @@ Everything Docker-related for Enatega lives here. The upstream source in
 `../repositories/food-delivery-multivendor` is mounted into containers and never
 edited. After any amount of use, `git status` in that repo stays clean (verified).
 
+> Setting this up on a new device? See [`SETUP-NEW-DEVICE.md`](./SETUP-NEW-DEVICE.md)
+> for the verified clone/install/run path, including the gotcha about which
+> `repositories/food-delivery-multivendor` fork gets cloned.
+
 - [Repositories](#1-repositories) · [Architecture](#2-architecture) · [Prerequisites & platform setup](#3-prerequisites--platform-setup)
 - [Environment variables](#4-environment-variables) · [Commands](#5-commands) · [Port map](#6-port-map)
 - [Phones: Android](#7-android-phone) · [Phones: iPhone](#8-iphone) · [Hot reload](#9-hot-reload--file-watching)
