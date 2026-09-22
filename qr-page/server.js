@@ -69,12 +69,12 @@ async function appSection(app) {
 async function page() {
   const sections = await Promise.all(APPS.map(appSection));
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Enatega QR codes</title><style>
+<title>Food Express QR codes</title><style>
 body{margin:0;padding:24px;font-family:system-ui,sans-serif;background:#f4f4f5;color:#18181b}
 h1{margin:0 0 4px}h2{margin:32px 0 12px}h2 small,figcaption small{display:block;font-weight:400;color:#52525b;font-size:13px;margin-top:4px}
 .row{display:flex;flex-wrap:wrap;gap:16px}figure{margin:0;background:#fff;border:1px solid #e4e4e7;border-radius:12px;padding:16px;width:260px}
 figure svg{width:228px;height:228px;display:block;margin:12px auto}code{font-size:11px;word-break:break-all}.warn{color:#b45309}
-</style></head><body><h1>Enatega QR codes</h1>
+</style></head><body><h1>Food Express QR codes</h1>
 <p>Phone on the same Wi-Fi as this computer (<code>${esc(HOST)}</code>). Reload this page after restarting an app.</p>
 ${sections.join("")}</body></html>`;
 }
@@ -105,4 +105,4 @@ http
       res.writeHead(500, { "content-type": "text/plain" }).end(`QR page error: ${e.message}`);
     }
   })
-  .listen(PORT, () => console.log(`Enatega QR page: http://localhost:${PORT}  (phones: http://${HOST}:${PORT})`));
+  .listen(PORT, () => console.log(`Food Express QR page: http://localhost:${PORT}  (phones: http://${HOST}:${PORT})`));
