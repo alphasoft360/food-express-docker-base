@@ -1,0 +1,4 @@
+.env
+build-output/*
+!build-output/.gitkeep
+.DS_Store

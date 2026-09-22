@@ -1,0 +1,9 @@
+{
+  "name": "enatega-qr-page",
+  "private": true,
+  "description": "LAN page with scannable QR codes for the Enatega Expo dev servers",
+  "main": "server.js",
+  "dependencies": {
+    "qrcode": "1.5.4"
+  }
+}

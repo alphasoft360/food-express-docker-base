@@ -1,0 +1,230 @@
+# Enatega development environment.
+# All six apps live in ONE upstream monorepo (enatega/food-delivery-multivendor),
+# bind-mounted read-write at /workspace. Nothing here is written into that repo
+# except files the repo already gitignores (.expo/, next-env.d.ts, empty
+# node_modules/.next mountpoints).
+#
+# No API / database / Redis services: the Enatega backend is proprietary and the
+# apps talk to the hosted API over HTTPS (see README "Backend").
+
+name: enatega
+
+x-app: &app
+  image: enatega-dev-node:${NODE_VERSION:-20.19.5}
+  build:
+    context: ./node
+    args:
+      NODE_VERSION: ${NODE_VERSION:-20.19.5}
+  init: true
+  restart: unless-stopped
+  tty: true          # Expo renders its QR code + interactive keys only with a TTY
+  stdin_open: true   # lets `docker attach enatega-<app>` drive Expo (r = reload, etc.)
+  networks: [enatega]
+  healthcheck: &tcp-health
+    # PORT is set per service.
+    test: ["CMD", "node", "-e", "require('net').connect(process.env.PORT).on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+    interval: 15s
+    timeout: 5s
+    retries: 3
+    start_period: 15m   # first run includes `npm ci`
+
+x-env: &env
+  HOST_UID: ${HOST_UID:-1000}
+  HOST_GID: ${HOST_GID:-1000}
+  CHOKIDAR_USEPOLLING: ${FILE_WATCH_POLLING:-false}
+  WATCHPACK_POLLING: ${FILE_WATCH_POLLING:-false}
+
+x-expo-env: &expo-env
+  <<: *env
+  # Expo embeds this host in the manifest / QR code. It must be the host's LAN IP
+  # (the phone cannot reach the container IP). Scripts auto-detect it.
+  REACT_NATIVE_PACKAGER_HOSTNAME: ${HOST_LAN_IP:?HOST_LAN_IP not set - run through scripts/ or set it in .env}
+  EXPO_PUBLIC_GOOGLE_MAPS_API_KEY_ANDROID: ${GOOGLE_MAPS_API_KEY_ANDROID:-}
+  EXPO_PUBLIC_GOOGLE_MAPS_API_KEY_IOS: ${GOOGLE_MAPS_API_KEY_IOS:-}
+
+x-repo: &repo ${REPO_DIR:-../repositories/food-delivery-multivendor}:/workspace
+
+services:
+  # ---------------------------------------------------------------- mobile (Expo)
+  customer:
+    <<: *app
+    container_name: enatega-customer
+    working_dir: /workspace/enatega-multivendor-app
+    # Upstream `npm start` (= expo start). With expo-dev-client in package.json, Expo
+    # auto-targets the development build; *_EXPO_FLAGS=--go forces Expo Go (docs: "Launch target").
+    command: npm start -- --port ${CUSTOMER_METRO_PORT:-8081} ${CUSTOMER_EXPO_FLAGS:-}
+    ports: ["${CUSTOMER_METRO_PORT:-8081}:${CUSTOMER_METRO_PORT:-8081}"]
+    environment:
+      <<: *expo-env
+      PORT: ${CUSTOMER_METRO_PORT:-8081}
+      EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: ${CUSTOMER_GOOGLE_WEB_CLIENT_ID:-}
+      EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID: ${CUSTOMER_GOOGLE_ANDROID_CLIENT_ID:-}
+      EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID: ${CUSTOMER_GOOGLE_IOS_CLIENT_ID:-}
+      EXPO_PUBLIC_GOOGLE_IOS_REVERSED_CLIENT_ID: ${CUSTOMER_GOOGLE_IOS_REVERSED_CLIENT_ID:-}
+    volumes:
+      - *repo
+      - customer_node_modules:/workspace/enatega-multivendor-app/node_modules
+      - npm_cache:/npm-cache
+
+  rider:
+    <<: *app
+    container_name: enatega-rider
+    working_dir: /workspace/enatega-multivendor-rider
+    command: npm start -- --port ${RIDER_METRO_PORT:-8082} ${RIDER_EXPO_FLAGS:-}
+    ports: ["${RIDER_METRO_PORT:-8082}:${RIDER_METRO_PORT:-8082}"]
+    environment:
+      <<: *expo-env
+      PORT: ${RIDER_METRO_PORT:-8082}
+      # Rider is the only mobile app with a multi-vendor API override; unset = upstream default.
+      EXPO_PUBLIC_GRAPHQL_URL: ${RIDER_GRAPHQL_URL:-https://aws-server-v2.enatega.com/graphql}
+      EXPO_PUBLIC_WS_GRAPHQL_URL: ${RIDER_WS_GRAPHQL_URL:-wss://aws-server-v2.enatega.com/graphql}
+    volumes:
+      - *repo
+      - rider_node_modules:/workspace/enatega-multivendor-rider/node_modules
+      - npm_cache:/npm-cache
+
+  store:
+    <<: *app
+    container_name: enatega-store
+    working_dir: /workspace/enatega-multivendor-store
+    command: npm start -- --port ${STORE_METRO_PORT:-8083} ${STORE_EXPO_FLAGS:-}
+    ports: ["${STORE_METRO_PORT:-8083}:${STORE_METRO_PORT:-8083}"]
+    environment:
+      <<: *expo-env
+      PORT: ${STORE_METRO_PORT:-8083}
+    volumes:
+      - *repo
+      - store_node_modules:/workspace/enatega-multivendor-store/node_modules
+      - npm_cache:/npm-cache
+
+  # ---------------------------------------------------------------- web (Next.js)
+  admin:
+    <<: *app
+    container_name: enatega-admin
+    working_dir: /workspace/enatega-multivendor-admin
+    command: npm run dev
+    ports: ["${ADMIN_PORT:-3001}:${ADMIN_PORT:-3001}"]
+    environment:
+      <<: *env
+      PORT: ${ADMIN_PORT:-3001}   # same port inside and out, so Next prints the real URL
+      NEXT_PUBLIC_SERVER_URL: ${API_URL:-https://aws-server-v2.enatega.com/}
+      NEXT_PUBLIC_WS_SERVER_URL: ${API_WS_URL:-wss://aws-server-v2.enatega.com/}
+      NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY_WEB:-}
+      NEXT_PUBLIC_ENCRYPTION_KEY: ${ADMIN_ENCRYPTION_KEY:-}
+      NEXT_PUBLIC_SINGLE_VENDOR_ADMIN_URL: http://localhost:${SV_ADMIN_PORT:-3003}/
+    volumes:
+      - *repo
+      - admin_node_modules:/workspace/enatega-multivendor-admin/node_modules
+      - admin_next:/workspace/enatega-multivendor-admin/.next
+      - npm_cache:/npm-cache
+
+  web:
+    <<: *app
+    container_name: enatega-web
+    working_dir: /workspace/enatega-multivendor-web
+    command: npm run dev
+    ports: ["${WEB_PORT:-3002}:${WEB_PORT:-3002}"]
+    environment:
+      <<: *env
+      PORT: ${WEB_PORT:-3002}   # same port inside and out, so Next prints the real URL
+      NEXT_PUBLIC_SERVER_URL: ${API_URL:-https://aws-server-v2.enatega.com/}
+      NEXT_PUBLIC_WS_SERVER_URL: ${API_WS_URL:-wss://aws-server-v2.enatega.com/}
+      NEXT_PUBLIC_SINGLE_VENDOR_SERVER_URL: ${SV_API_URL:-https://enatega-multivendor-api-production-9b09.up.railway.app/}
+      NEXT_PUBLIC_SINGLE_VENDOR_WS_SERVER_URL: ${SV_API_WS_URL:-wss://enatega-multivendor-api-production-9b09.up.railway.app/}
+      NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY_WEB:-}
+    volumes:
+      - *repo
+      - web_node_modules:/workspace/enatega-multivendor-web/node_modules
+      - web_next:/workspace/enatega-multivendor-web/.next
+      - npm_cache:/npm-cache
+
+  sv-admin:
+    <<: *app
+    container_name: enatega-sv-admin
+    working_dir: /workspace/enatega-singlevendor-admin
+    command: npm run dev
+    ports: ["${SV_ADMIN_PORT:-3003}:${SV_ADMIN_PORT:-3003}"]
+    environment:
+      <<: *env
+      PORT: ${SV_ADMIN_PORT:-3003}   # same port inside and out, so Next prints the real URL
+      NEXT_PUBLIC_SERVER_URL: ${SV_API_URL:-https://enatega-multivendor-api-production-9b09.up.railway.app/}
+      NEXT_PUBLIC_WS_SERVER_URL: ${SV_API_WS_URL:-wss://enatega-multivendor-api-production-9b09.up.railway.app/}
+      NEXT_PUBLIC_GOOGLE_MAPS_KEY: ${GOOGLE_MAPS_API_KEY_WEB:-}
+      NEXT_PUBLIC_MULTIVENDOR_ADMIN_URL: http://localhost:${ADMIN_PORT:-3001}/
+      NEXT_PUBLIC_SINGLE_VENDOR_WEB_URL: http://localhost:${WEB_PORT:-3002}/
+    volumes:
+      - *repo
+      - sv_admin_node_modules:/workspace/enatega-singlevendor-admin/node_modules
+      - sv_admin_next:/workspace/enatega-singlevendor-admin/.next
+      - npm_cache:/npm-cache
+
+  # ---------------------------------------------------------------- QR page
+  # Browser page with a real QR image per Expo app + APK downloads:
+  # http://localhost:8090 (phones: http://<HOST_LAN_IP>:8090). Needed because
+  # Expo's half-block terminal QR breaks in Docker Desktop's Logs tab.
+  qr:
+    image: enatega-qr-page:1
+    build: ./qr-page
+    container_name: enatega-qr
+    init: true
+    restart: unless-stopped
+    networks: [enatega]
+    ports: ["${QR_PAGE_PORT:-8090}:${QR_PAGE_PORT:-8090}"]
+    environment:
+      PORT: ${QR_PAGE_PORT:-8090}
+      HOST_LAN_IP: ${HOST_LAN_IP:?HOST_LAN_IP not set - run through scripts/ or set it in .env}
+      CUSTOMER_METRO_PORT: ${CUSTOMER_METRO_PORT:-8081}
+      RIDER_METRO_PORT: ${RIDER_METRO_PORT:-8082}
+      STORE_METRO_PORT: ${STORE_METRO_PORT:-8083}
+    volumes:
+      - ./build-output:/apks:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(process.env.PORT).on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ------------------------------------------- optional: Android dev-client APK builder
+  # Not started by `up`. Run via scripts/build-android.sh <customer|rider|store>.
+  # Builds from a COPY of the app inside a volume, so the repo never gets android/.
+  android-builder:
+    profiles: [android]
+    image: enatega-android-builder:1
+    build: ./android-builder
+    platform: linux/amd64   # Google ships Linux build-tools (aapt2) for x86_64 only
+    container_name: enatega-android-builder
+    init: true
+    networks: [enatega]
+    environment:
+      HOST_UID: ${HOST_UID:-1000}
+      HOST_GID: ${HOST_GID:-1000}
+      ANDROID_ARCHS: ${ANDROID_ARCHS:-arm64-v8a}
+      GRADLE_OPTS: -Xmx512m      # Gradle client only; build heap is GRADLE_JVMARGS
+      GRADLE_JVMARGS: ${GRADLE_JVMARGS:--Xmx3g -XX:MaxMetaspaceSize=1g}
+      GRADLE_WORKERS: ${GRADLE_WORKERS:-2}
+      EXPO_PUBLIC_GOOGLE_MAPS_API_KEY_ANDROID: ${GOOGLE_MAPS_API_KEY_ANDROID:-}
+      EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID: ${CUSTOMER_GOOGLE_ANDROID_CLIENT_ID:-}
+    volumes:
+      - ${REPO_DIR:-../repositories/food-delivery-multivendor}:/workspace:ro
+      - ./build-output:/output
+      - android_build:/build
+      - gradle_cache:/root/.gradle
+      - npm_cache:/npm-cache
+
+networks:
+  enatega:
+    name: enatega-network
+
+volumes:
+  customer_node_modules:
+  rider_node_modules:
+  store_node_modules:
+  admin_node_modules:
+  web_node_modules:
+  sv_admin_node_modules:
+  admin_next:
+  web_next:
+  sv_admin_next:
+  npm_cache:
+  android_build:
+  gradle_cache:
